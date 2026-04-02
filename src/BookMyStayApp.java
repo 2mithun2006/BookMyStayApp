@@ -1,109 +1,55 @@
+import java.io.*;
 import java.util.*;
 
-class Reservation {
+class Reservation implements Serializable {
+    private static final long serialVersionUID = 1L;
 
-    private String guestName;
-    private String roomType;
+    String reservationId;
+    String roomType;
 
-    public Reservation(String guestName, String roomType) {
-        this.guestName = guestName;
-        this.roomType = roomType;
-    }
-
-    public String getGuestName() {
-        return guestName;
-    }
-
-    public String getRoomType() {
-        return roomType;
+    public Reservation(String id, String type) {
+        this.reservationId = id;
+        this.roomType = type;
     }
 }
 
-class RoomInventory {
+class SystemState implements Serializable {
+    private static final long serialVersionUID = 1L;
 
-    private Map<String, Integer> inventory = new HashMap<>();
+    Map<String, Integer> inventory;
+    List<Reservation> bookings;
 
-    public void addRoomType(String roomType, int count) {
-        inventory.put(roomType, count);
-    }
-
-    public int getAvailability(String roomType) {
-        return inventory.getOrDefault(roomType, 0);
-    }
-
-    public void decrementRoom(String roomType) {
-        int current = inventory.get(roomType);
-        inventory.put(roomType, current - 1);
-    }
-
-    public void displayInventory() {
-        System.out.println("\nCurrent Inventory:");
-        for (Map.Entry<String, Integer> entry : inventory.entrySet()) {
-            System.out.println(entry.getKey() + " : " + entry.getValue());
-        }
-    }
-}
-
-class BookingService {
-
-    private Queue<Reservation> requestQueue;
-    private RoomInventory inventory;
-    private Set<String> allocatedRoomIds = new HashSet<>();
-    private Map<String, Set<String>> allocatedRoomsByType = new HashMap<>();
-
-    public BookingService(Queue<Reservation> requestQueue, RoomInventory inventory) {
-        this.requestQueue = requestQueue;
+    public SystemState(Map<String, Integer> inventory, List<Reservation> bookings) {
         this.inventory = inventory;
+        this.bookings = bookings;
     }
+}
 
-    public void processBookings() {
+class PersistenceService {
 
-        while (!requestQueue.isEmpty()) {
+    private static final String FILE_NAME = "hotel_state.dat";
 
-            Reservation reservation = requestQueue.poll();
-            String roomType = reservation.getRoomType();
+    public void save(SystemState state) {
+        try (ObjectOutputStream oos =
+                     new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
 
-            System.out.println("\nProcessing booking for " + reservation.getGuestName());
+            oos.writeObject(state);
+            System.out.println("State saved successfully.");
 
-            if (inventory.getAvailability(roomType) > 0) {
-
-                String roomId = generateRoomId(roomType);
-
-                allocatedRoomIds.add(roomId);
-
-                allocatedRoomsByType
-                        .computeIfAbsent(roomType, k -> new HashSet<>())
-                        .add(roomId);
-
-                inventory.decrementRoom(roomType);
-
-                System.out.println("Reservation Confirmed!");
-                System.out.println("Guest: " + reservation.getGuestName());
-                System.out.println("Room Type: " + roomType);
-                System.out.println("Assigned Room ID: " + roomId);
-
-            } else {
-                System.out.println("Reservation Failed. No available rooms for type: " + roomType);
-            }
+        } catch (Exception e) {
+            System.out.println("Error saving state.");
         }
     }
 
-    private String generateRoomId(String roomType) {
+    public SystemState load() {
+        try (ObjectInputStream ois =
+                     new ObjectInputStream(new FileInputStream(FILE_NAME))) {
 
-        String roomId;
+            return (SystemState) ois.readObject();
 
-        do {
-            roomId = roomType.substring(0, 2).toUpperCase() + "-" + (int)(Math.random() * 1000);
-        } while (allocatedRoomIds.contains(roomId));
-
-        return roomId;
-    }
-
-    public void displayAllocations() {
-        System.out.println("\nAllocated Rooms:");
-
-        for (Map.Entry<String, Set<String>> entry : allocatedRoomsByType.entrySet()) {
-            System.out.println(entry.getKey() + " -> " + entry.getValue());
+        } catch (Exception e) {
+            System.out.println("No previous state found. Starting fresh.");
+            return null;
         }
     }
 }
@@ -112,21 +58,82 @@ public class BookMyStayApp {
 
     public static void main(String[] args) {
 
-        RoomInventory inventory = new RoomInventory();
-        inventory.addRoomType("Standard", 2);
-        inventory.addRoomType("Deluxe", 1);
+        Scanner sc = new Scanner(System.in);
+        PersistenceService persistence = new PersistenceService();
 
-        Queue<Reservation> requestQueue = new LinkedList<>();
+        Map<String, Integer> inventory = new HashMap<>();
+        List<Reservation> bookings = new ArrayList<>();
 
-        requestQueue.add(new Reservation("Alice", "Standard"));
-        requestQueue.add(new Reservation("Bob", "Deluxe"));
-        requestQueue.add(new Reservation("Charlie", "Standard"));
-        requestQueue.add(new Reservation("David", "Deluxe"));
+        SystemState loadedState = persistence.load();
 
-        BookingService bookingService = new BookingService(requestQueue, inventory);
+        if (loadedState != null) {
+            inventory = loadedState.inventory;
+            bookings = loadedState.bookings;
+            System.out.println("State restored successfully.");
+        } else {
+            inventory.put("Standard", 2);
+            inventory.put("Deluxe", 2);
+        }
 
-        bookingService.processBookings();
-        bookingService.displayAllocations();
-        inventory.displayInventory();
+        int choice;
+
+        do {
+            System.out.println("\n===== BookMyStay Menu =====");
+            System.out.println("1. Book Room");
+            System.out.println("2. View Bookings");
+            System.out.println("3. View Inventory");
+            System.out.println("4. Save & Exit");
+            System.out.print("Enter choice: ");
+
+            choice = sc.nextInt();
+            sc.nextLine();
+
+            switch (choice) {
+
+                case 1:
+                    System.out.print("Enter Reservation ID: ");
+                    String id = sc.nextLine();
+
+                    System.out.print("Enter Room Type: ");
+                    String type = sc.nextLine();
+
+                    int available = inventory.getOrDefault(type, 0);
+
+                    if (available > 0) {
+                        inventory.put(type, available - 1);
+                        bookings.add(new Reservation(id, type));
+                        System.out.println("Booking successful!");
+                    } else {
+                        System.out.println("No rooms available.");
+                    }
+                    break;
+
+                case 2:
+                    System.out.println("\nBookings:");
+                    for (Reservation r : bookings) {
+                        System.out.println(r.reservationId + " | " + r.roomType);
+                    }
+                    break;
+
+                case 3:
+                    System.out.println("\nInventory:");
+                    for (Map.Entry<String, Integer> e : inventory.entrySet()) {
+                        System.out.println(e.getKey() + " : " + e.getValue());
+                    }
+                    break;
+
+                case 4:
+                    SystemState state = new SystemState(inventory, bookings);
+                    persistence.save(state);
+                    System.out.println("Exiting...");
+                    break;
+
+                default:
+                    System.out.println("Invalid choice!");
+            }
+
+        } while (choice != 4);
+
+        sc.close();
     }
 }
